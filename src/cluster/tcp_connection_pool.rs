@@ -3,8 +3,10 @@ use std::cell::RefCell;
 use std::error::Error;
 use std::io;
 use std::io::Write;
+use std::net::IpAddr;
 
 use crate::authenticators::Authenticator;
+use crate::cluster::ConnectionPool;
 use crate::cluster::NodeTcpConfig;
 use crate::compression::Compression;
 use crate::error;
@@ -13,7 +15,7 @@ use crate::frame::{Frame, IntoBytes, Opcode};
 use crate::transport::{CDRSTransport, TransportTcp};
 
 /// Shortcut for `r2d2::Pool` type of TCP-based CDRS connections.
-pub type TcpConnectionPool<A> = Pool<TcpConnectionsManager<A>>;
+pub type TcpConnectionPool<A> = ConnectionPool<TcpConnectionsManager<A>>;
 
 /// `r2d2::Pool` of TCP-based CDRS connections.
 ///
@@ -24,14 +26,21 @@ pub fn new_tcp_pool<'a, A: Authenticator + Send + Sync + 'static>(
     let manager =
         TcpConnectionsManager::new(node_config.addr.to_string(), node_config.authenticator);
 
-    Builder::new()
+    let pool = Builder::new()
         .max_size(node_config.max_size)
         .min_idle(node_config.min_idle)
         .max_lifetime(node_config.max_lifetime)
         .idle_timeout(node_config.idle_timeout)
         .connection_timeout(node_config.connection_timeout)
         .build(manager)
-        .map_err(|err| error::Error::from(err.description()))
+        .map_err(|err| error::Error::from(err.description()))?;
+
+    let addr = node_config
+        .addr
+        .parse::<IpAddr>()
+        .map_err(|err| error::Error::from(err.description()))?;
+
+    Ok(TcpConnectionPool::new(pool, addr))
 }
 
 /// `r2d2` connection manager.
